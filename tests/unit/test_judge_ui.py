@@ -239,3 +239,29 @@ def test_staff_grid_shows_loading_not_empty_while_the_list_loads(env):
     assert "const g=api_" in load and "if(g!==api_)return" in load  # a late reply never fills a replaced grid
     assert "setGridOption('loading',false)" in load
     assert "Could not load this list" in load  # a failed list says so instead of "Nothing here yet"
+
+
+
+def test_demo_scope_box_is_on_home_and_staff_pages(env):
+    """Judges should see the same plain-language scope card on the landing deck and every staff view."""
+    landing = env["client"].get("/").text
+    desk = staff_client(env).get("/staff").text
+    lead = staff_client(env, "billing_lead").get("/staff").text
+    assert landing.count('class="demo-scope glass"') == 2  # first scene and the try-it scene
+    assert desk.count('class="demo-scope glass"') == 1
+    bits = (
+        "What this demo does",
+        "Real cash prices, booking, and PayPal or Venmo deposits (sandbox, no real money).",
+        "The AI never moves money. Refunds need a human: front desk up to $100, billing lead above that.",
+        "Every action is logged and reconciled against PayPal.",
+        "All data is synthetic. In production the model runs self-hosted (Ollama), so patient data stays inside the clinic.",
+    )
+    for page in (landing, desk, lead):
+        for bit in bits:
+            assert bit in page, bit
+    assert "Built for the PayPal hackathon" not in landing
+    assert "Production plan:" not in landing
+    assert "This hackathon demo uses OpenAI" not in landing
+    # Ollama is the production plan, not this demo
+    assert "demo uses Ollama" not in landing
+    assert "this demo uses Ollama" not in landing.lower()

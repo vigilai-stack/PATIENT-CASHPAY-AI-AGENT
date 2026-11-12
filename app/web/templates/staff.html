@@ -6,6 +6,7 @@
 <div class="banner" id="role-banner" role="alert" aria-live="assertive"><span class="t"><svg class="lock" style="width:20px;height:20px" aria-hidden="true"><use href="#i-lock"/></svg>Needs billing lead approval.</span>
 <span class="d" id="role-banner-d"></span>
 <form method="post" action="/demo/login/billing_lead" style="display:inline"><button class="secondary" id="banner-switch">Switch to billing lead</button></form><button class="ghost x" id="banner-close" aria-label="Dismiss">Dismiss</button></div>
+{% include "_demo_scope.html" %}
 <div class="kpis" id="kpis"></div>
 <div class="row" style="justify-content:space-between"><div class="tabs" id="tabs">
 <button data-t="approvals" class="on"><svg class="ic" aria-hidden="true"><use href="#i-human"/></svg>Approvals</button><button data-t="payments"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Payments</button><button data-t="recon"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Reconciliation</button><button data-t="audit"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Audit log</button></div>

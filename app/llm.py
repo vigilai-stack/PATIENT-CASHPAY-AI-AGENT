@@ -36,6 +36,7 @@ INTENTS = (
     "pay_deposit",
     "pay_plan",
     "pay_invoice",
+    "help",
     "clarify",
     "refuse",
 )
@@ -247,6 +248,8 @@ def build_messages(
         "or other. Use includes when the patient asks whether a fee, a read, or a part of a service "
         "is already in the posted amount. Use excludes when they ask what the list leaves out. "
         "Use price only for a cash-price question. Use other when they refer to a staff note. "
+        "Use intent help with focus other and service_code null for a greeting, thanks, or a question "
+        "about what this assistant can do or how this chat works. "
         "Each catalog line lists the words that name that service. If one of those words appears, "
         "that service is on the list; do not say it is missing. The words clinician and ordered do "
         "not ask for a diagnosis or a dose. concern is clinical only for a symptom, a diagnosis, "

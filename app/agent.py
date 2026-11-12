@@ -36,7 +36,7 @@ from app.conversation import (
     wants_person,
 )
 from app.guard import detect_injection
-from app.llm import UNAVAILABLE_TEXT, LLMUnavailable, OpenAIInterpreter, patient_note
+from app.llm import UNAVAILABLE_TEXT, LLMUnavailable, OpenAIInterpreter
 from app.models import Appointment, ApprovalRequest, Patient, Payment, Service
 from app.pricing import (
     UNIT_QUANTITY_MAX,
@@ -95,6 +95,7 @@ class Agent:
 
     def _service_for(self, text: str):
         words = set(re.findall(r"[a-z\-]+", text.lower()))
+        words |= {w[:-1] for w in words if len(w) > 3 and w.endswith("s")}  # "labs" names the lab panel
         best, score = None, 0
         for s in self.c.services():
             k = len(words & set(s.keywords.split()))
@@ -156,6 +157,10 @@ class Agent:
                 reply = Reply(CLINICAL_TEXT, assistant="deterministic", handoff="clinical")
             elif wants_person(text) and not flags:
                 reply = Reply(PERSON_TEXT, assistant="deterministic", handoff="requested")
+            elif not flags and (help_kind(text) or status_ask(text)):
+                # Whole-message fixed phrases ("hi", "thanks", "my booking", ...) get fixed replies with
+                # no model call, so they never use the rate budget or show the model-unavailable text.
+                reply = self._fixed_reply(patient, text)
             elif flags or self._offline_route(text, quote) or self.settings.llm_mode != "openai":
                 reply = self._route(patient, text, flags, quote)
                 reply = self._apply_carried(patient, reply, text, carried, quote)
@@ -194,7 +199,7 @@ class Agent:
 
     # ------------------------------------------------------------------
     def _route(self, patient: Patient, text: str, flags: list[str], unit_quote: dict) -> Reply:
-        t = text.lower()
+        t = _PRICE_TYPO.sub("price", text.lower())
         appt = self.c.latest_appointment(patient)
         held = appt if appt and appt.status == "HELD" else None
 
@@ -225,6 +230,12 @@ class Agent:
                     except FlowError as e:
                         msg += " " + e.message
             return Reply(msg)
+
+        kind = help_kind(text)
+        if kind:
+            return self._help_reply(patient, kind)
+        if status_ask(text):
+            return self._status_reply(appt)
 
         m = re.match(r"hold (\d+)(?:\s+(\d+))?$", t)
         if m:
@@ -558,16 +569,12 @@ class Agent:
             [{"label": f"Book {svc.name}", "send": f"book {svc.code.lower()} {svc.keywords.split()[0]}"}],
         )
 
-    def _staff_or_unknown(self, history: list[dict]) -> str:
+    def _staff_or_unknown(self, history: list[dict], text: str = "") -> str:
+        """Quote the saved staff note only when the question is about it. Otherwise do not guess."""
         staff = _latest_staff(history)
-        if staff is None:
-            return (
-                "That detail is not in the saved chat or the clinic price list. "
-                "I will not guess. Clinic staff can read the transcript in this demo."
-            )
-        return (
-            f"{staff['name']} wrote in this chat: {staff['body']}\nI am quoting that saved note and not adding to it."
-        )
+        if staff is None or not note_relevant(text, staff["body"]):
+            return UNKNOWN_TEXT
+        return f"{staff['name']} wrote in this chat: {staff['body']}\n{_QUOTE_TAIL}"
 
     def _apply_carried(self, patient: Patient, reply: Reply, text: str, carried, unit_quote: dict) -> Reply:
         if carried is None or not _is_unresolved(reply.text):
@@ -601,7 +608,7 @@ class Agent:
     ) -> Reply:
         """Execute a validated intent. Prices, quantities, and money amounts come from the server."""
         t = text.lower()
-        note = patient_note(turn.explanation)
+        # The model's explanation is its own reasoning ("The question asks for..."). It is never shown.
         svc = self._by_code(turn.service_code)
         if turn.service_code and svc is None:
             return Reply(
@@ -611,15 +618,35 @@ class Agent:
             )
         appt = self.c.latest_appointment(patient)
         held = appt if appt and appt.status == "HELD" else None
+        # A whole-message greeting, help, payments, real-money, cancel, or status question wins over a
+        # carried service and over a saved staff note. The match is on the whole message only.
+        kind = help_kind(text)
+        if kind:
+            reply = self._help_reply(patient, kind)
+            reply.assistant = "openai"
+            return reply
+        if status_ask(text):
+            reply = self._status_reply(appt)
+            reply.assistant = "openai"
+            return reply
         if turn.focus in ("includes", "excludes") and svc is not None:
-            return self._prefix_note(self._catalog_fact(svc, turn.focus, history or []), note)
+            return self._as_model(self._catalog_fact(svc, turn.focus, history or []))
+        if svc is None and turn.intent == "help":
+            reply = self._help_reply(patient, "help")
+            reply.assistant = "openai"
+            return reply
         if turn.focus == "other":
-            return Reply(self._staff_or_unknown(history or []), assistant="openai")
+            quoted = self._staff_or_unknown(history or [], text)
+            return Reply(
+                quoted,
+                [] if quoted.endswith(_QUOTE_TAIL) else [dict(b) for b in HELP_BUTTONS],
+                assistant="openai",
+            )
         if turn.intent in ("clarify", "refuse"):
-            return Reply(note or _FALLBACK, self._service_buttons(), assistant="openai")
+            return Reply(_FALLBACK, self._service_buttons(), assistant="openai")
         if turn.intent == "list_services":
             return Reply(
-                note or "Here are our cash prices. Tap one for details.",
+                "Here are our cash prices. Tap one for details.",
                 self._service_buttons(),
                 assistant="openai",
             )
@@ -629,7 +656,7 @@ class Agent:
             return reply
         if turn.intent in ("price", "book"):
             if svc is None:
-                return Reply(note or "Which service do you mean?", self._service_buttons(), assistant="openai")
+                return Reply(WHICH_SERVICE_TEXT, self._service_buttons(), assistant="openai")
             if is_per_unit(svc):
                 reply = self._unit_reply(patient, t, svc, unit_quote, held)
             elif turn.intent == "book":
@@ -641,7 +668,7 @@ class Agent:
                     [{"label": f"Book {svc.name}", "send": f"book {svc.code.lower()} {svc.keywords.split()[0]}"}],
                     card=_price_card(svc, svc.price_cents, plan_ok),
                 )
-            return self._prefix_note(reply, note)
+            return self._as_model(reply)
         if turn.intent == "refund_request":
             reply = self._refund_reply(patient, t, text)
             reply.assistant = "openai"
@@ -685,10 +712,48 @@ class Agent:
             return self._pay_intent(patient, held, turn.intent, t, turn.months)
         return Reply(_FALLBACK, self._service_buttons(), assistant="openai")
 
-    def _prefix_note(self, reply: Reply, note: str | None) -> Reply:
+    def _help_reply(self, patient: Patient, kind: str = "help") -> Reply:
+        """Fixed capability text. No prices, no amounts, and only buttons for actions that exist."""
+        first = _first_name(patient)
+        buttons = [dict(b) for b in HELP_BUTTONS]
+        name = f", {first}" if first else ""
+        if kind == "thanks":
+            return Reply(f"You're welcome{name}! Anything else I can help with?", buttons)
+        if kind == "bye":
+            return Reply(f"Take care{name}! This chat is saved, so you can pick up where you left off.", buttons)
+        if kind == "payments":
+            appt = self.c.latest_appointment(patient)
+            held = appt if appt and appt.status == "HELD" else None
+            return Reply(PAYMENTS_TEXT, self._pay_buttons(held) if held else buttons[:2])
+        if kind == "real_money":
+            where = (
+                "Checkout uses PayPal's sandbox, a test system with test accounts."
+                if self.settings.payment_mode == "sandbox"
+                else "Checkout runs in a local test mode."
+            )
+            return Reply(f"No real money moves here. This is a demo. {where}", buttons)
+        if kind == "who":
+            return Reply(
+                WHO_TEXT,
+                [{"label": "Talk to a person", "send": "I'd like to talk to a person"}] + buttons[:2],
+            )
+        if kind == "cancel":
+            return Reply(CANCEL_TEXT, [{"label": "My booking", "send": "status"}], handoff="requested")
+        hello = f"Hi {first}!" if first else "Hi there!"
+        return Reply(HELP_TEXT.format(hello=hello), buttons)
+
+    def _fixed_reply(self, patient: Patient, text: str) -> Reply:
+        """Fixed text for a whole-message small-talk or status question. Labelled deterministic."""
+        kind = help_kind(text)
+        if kind:
+            reply = self._help_reply(patient, kind)
+        else:
+            reply = self._status_reply(self.c.latest_appointment(patient))
+        reply.assistant = "deterministic"
+        return reply
+
+    def _as_model(self, reply: Reply) -> Reply:
         reply.assistant = "openai"
-        if note:
-            reply.text = f"{note}\n{reply.text}"
         return reply
 
     def _status_reply(self, appt) -> Reply:
@@ -943,6 +1008,207 @@ def _when(dt) -> str:
 def _pending_code(unit_quote: dict) -> str | None:
     code = unit_quote.get("code")
     return code if isinstance(code, str) else None
+
+
+HELP_TEXT = (
+    "{hello} I'm the clinic's payment assistant. Here's what I can do for you:\n"
+    "- Show you the clinic's posted cash prices\n"
+    "- Book or hold a visit time\n"
+    "- Take a deposit with PayPal or Venmo. It's authorized now and collected at check-in\n"
+    "- Pass refund or discount requests to a person on the clinic staff\n"
+    "- Remember what you've already told me, so you don't have to repeat it\n\n"
+    "What would you like to do?"
+)
+
+WHICH_SERVICE_TEXT = "Which service do you mean? Tap one below to see its posted cash price."
+UNKNOWN_TEXT = (
+    "That detail is not in the saved chat or the clinic price list. "
+    "I will not guess. Clinic staff can read the transcript in this demo. "
+    "I can help with cash prices, booking a visit, and paying with PayPal or Venmo."
+)
+_QUOTE_TAIL = "I am quoting that saved note and not adding to it."
+HELP_BUTTONS = (
+    {"label": "See cash prices", "send": "services"},
+    {"label": "Book a visit", "send": "book"},
+    {"label": "My booking", "send": "status"},
+)
+PAYMENTS_TEXT = (
+    "You can pay with PayPal or Venmo. You can pay in full, put down a deposit that's authorized now "
+    "and collected at check-in, use a monthly plan on larger visits, or get an emailed invoice. "
+    "Pick a service and a time first, and I'll show you the options for that visit."
+)
+WHO_TEXT = (
+    "I'm the clinic's automated payment assistant, not a person. I can show posted cash prices, book a "
+    "visit, and take PayPal or Venmo payments. If you'd like a person, tap below and I'll save this chat "
+    "for clinic staff."
+)
+CANCEL_TEXT = (
+    "I can't cancel or change a booking from this chat, and I can't move money. I saved this conversation "
+    "so clinic staff can help with the change. If you already paid, any refund is reviewed by a person."
+)
+
+_GREETING = r"(?:hi|hii+|hello|hey|hiya|howdy|yo|good (?:morning|afternoon|evening)|greetings)(?: there)?"
+_HELP_PHRASES = (
+    r"help",
+    r"help me",
+    r"help please",
+    r"please help(?: me)?",
+    r"(?:can|could) you help(?: me)?",
+    r"i need (?:some )?help",
+    r"what (?:can|do|could) you do(?: for me)?",
+    r"what (?:else )?can you help(?: me)? with",
+    r"what can i (?:do|ask)(?: here)?",
+    r"how (?:does|do) (?:this|it|you) work",
+    r"how do i use this",
+    r"how can you help(?: me)?",
+    r"what (?:is|s) this(?: app| chat| site| place)?",
+    r"whats this(?: app| chat| site)?",
+    r"what are you",
+    r"who are you",
+    r"what is cashpay|whats cashpay|what is patient cashpay",
+    r"what services(?: do you (?:offer|provide|have))?",
+    r"what do you offer",
+    r"i(?: am|m) (?:confused|lost)",
+    r"start|options",
+)
+_HELP_RE = re.compile(
+    rf"(?:{_GREETING} )?(?:{'|'.join(_HELP_PHRASES)})(?: please)?|{_GREETING}",
+)
+_KINDS = (
+    (
+        "payments",
+        re.compile(
+            r"(?:can i |do you |how (?:can|do) i )?(?:pay|take|accept|use)(?: with| by| using)? "
+            r"(?:paypal|venmo|paypal or venmo|venmo or paypal)"
+            r"|what (?:payment )?(?:methods|options|ways to pay)(?: do you (?:accept|take|have))?"
+            r"|what payment methods do you (?:accept|take)|how (?:can|do) i pay|help me pay|ways to pay"
+        ),
+    ),
+    (
+        "real_money",
+        re.compile(r"(?:is (?:this|it) )?(?:real money|a real payment|real payments|a real charge)|is this real"),
+    ),
+    (
+        "who",
+        re.compile(
+            r"(?:are you|is this) (?:a )?(?:real person|person|human|bot|robot|ai)"
+            r"|am i talking to (?:a )?(?:bot|person|human|real person)"
+        ),
+    ),
+    (
+        "cancel",
+        re.compile(
+            r"(?:i (?:want|need|would like) to |id like to |can i |please |how (?:do|can) i )?"
+            r"(?:cancel|reschedule|change|move)(?: my)?(?: (?:appointment|booking|visit|appt))?(?: please)?"
+        ),
+    ),
+)
+_THANKS_RE = re.compile(
+    r"(?:(?:ok|okay|great|cool|perfect) )?(?:thanks|thank you|thx|ty)(?: (?:a lot|so much|very much))?"
+)
+_BYE_RE = re.compile(r"(?:bye|goodbye|bye bye|see you|see ya|later|good night|thats all|that is all)")
+
+
+_PRICE_TYPO = re.compile(r"\b(?:prise|prize|pirce|prcie|proce|prics|prises)\b")
+
+
+def _normalize(text: str) -> str:
+    lowered = (text or "").lower().replace("\u2019", "'").replace("'", "")
+    return " ".join(re.sub(r"[^a-z ]+", " ", lowered).split())
+
+
+def help_kind(text: str) -> str | None:
+    """Return "help", "thanks", or "bye" only when the whole message is that kind of small talk.
+
+    Matching the whole message keeps real questions ("hi, how much is a chest x-ray?") on their
+    normal path, and keeps unknown detail questions on the "I will not guess" reply.
+    """
+    t = _normalize(text)
+    if not t or len(t) > 60:
+        return None
+    if _HELP_RE.fullmatch(t):
+        return "help"
+    for kind, pattern in _KINDS:
+        if pattern.fullmatch(t):
+            return kind
+    if _THANKS_RE.fullmatch(t):
+        return "thanks"
+    if _BYE_RE.fullmatch(t):
+        return "bye"
+    return None
+
+
+_STATUS_RE = re.compile(
+    r"(?:what is |whats |check |show me |show |see )?my (?:booking|bookings|appointment|appt|visit)(?: status)?"
+    r"|(?:booking|appointment|payment) status|status"
+    r"|when is my (?:appointment|booking|visit|appt)"
+    r"|do i have (?:a |an )?(?:booking|appointment)"
+)
+_NOTE_REF = re.compile(r"\b(?:note|front desk|staff|jordan|they said|you said|wrote|message)\b")
+_NOTE_STOP = {
+    "this",
+    "that",
+    "there",
+    "their",
+    "with",
+    "have",
+    "your",
+    "what",
+    "about",
+    "from",
+    "already",
+    "list",
+    "cash",
+    "does",
+    "will",
+    "would",
+    "could",
+    "should",
+    "please",
+    "just",
+    "they",
+    "them",
+    "then",
+    "than",
+    "were",
+    "been",
+    "also",
+    "into",
+    "only",
+    "some",
+    "much",
+    "more",
+    "here",
+    "when",
+    "where",
+    "which",
+}
+
+
+def status_ask(text: str) -> bool:
+    """A whole-message booking status question, for example "my booking" or "when is my appointment"."""
+    t = _normalize(text)
+    return bool(t) and len(t) <= 60 and bool(_STATUS_RE.fullmatch(t))
+
+
+def _stems(text: str) -> set[str]:
+    words = re.findall(r"[a-z]+", (text or "").lower())
+    return {w[:4] for w in words if (len(w) >= 4 and w not in _NOTE_STOP)} | {
+        "fee" for w in words if w in ("fee", "fees")
+    }
+
+
+def note_relevant(text: str, note: str) -> bool:
+    """True when the question points at the staff note or shares a meaningful word with it."""
+    low = (text or "").lower()
+    if _NOTE_REF.search(low):
+        return True
+    return bool(_stems(low) & _stems(note))
+
+
+def _first_name(patient: Patient | None) -> str:
+    name = str(getattr(patient, "name", "") or "").strip()
+    return name.split()[0] if name else ""
 
 
 _FALLBACK = (

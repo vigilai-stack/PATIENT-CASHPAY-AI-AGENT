@@ -72,6 +72,24 @@ html.deck .teamsec{padding-left:calc(var(--rail) + 30px);padding-bottom:20px}
 .try2{margin-top:6px;grid-column:1/-1;padding:12px 18px;max-width:980px;justify-self:center;width:100%}
 .try2 summary{cursor:pointer;font-weight:700;font-size:16px;min-height:32px;display:flex;align-items:center;gap:8px}
 .try2 ol{margin:8px 0 4px 18px;padding:0;color:var(--t2);font-size:14px;line-height:1.65}
+/* Judge-facing demo scope card on the home deck and the staff console. */
+.demo-scope,.demo-scope.glass{margin:0 0 14px;padding:14px 18px;border-radius:16px;border:2px solid rgba(34,211,238,.75);
+ background:linear-gradient(rgba(34,211,238,.10),rgba(34,211,238,.10)),color-mix(in srgb,var(--bg) 72%,transparent);
+ color:var(--t1);font-size:16px;line-height:1.5;max-width:100%}
+.demo-scope h3{margin:0 0 8px;font-size:18px;font-weight:800;color:#22D3EE;letter-spacing:-.01em}
+.demo-scope ul{margin:0;padding:0 0 0 1.15em;display:grid;gap:6px}
+.demo-scope li{overflow-wrap:anywhere;color:var(--t1)}
+.demo-scope-plan,.demo-scope-hack{margin:8px 0 0;font-size:15px;line-height:1.45;color:var(--t1)}
+.demo-scope-hack{font-weight:600}
+html.deck #s1 .demo-scope{grid-column:1/-1;margin:6px 0 0;padding:14px 18px;font-size:16px;border-radius:18px}
+html.deck #s1 .demo-scope ul{grid-template-columns:1fr 1fr;gap:6px 22px}
+html.deck #s1 .hero1{max-height:calc(100svh - 440px)}
+html.deck .try8>.demo-scope{grid-column:1/-1;margin:4px 0 0;max-width:none;justify-self:stretch}
+@media (max-height:800px){
+ html.deck #s1 .demo-scope{font-size:15px;padding:12px 16px}
+ html.deck #s1 .demo-scope h3{font-size:17px;margin-bottom:6px}
+ html.deck #s1 .hero1{max-height:calc(100svh - 400px)}
+}
 @media (max-width:1180px){:root{--teambar:70px}.teambar .m{width:auto;flex:0 1 auto;border-radius:18px}.teambar .tx{flex-direction:column;align-items:flex-start;gap:1px}.teambar .nm{font-size:14px}.teambar .em{font-size:12px}}
 @media (max-width:900px){
  :root{--hdr:92px;--rail:0px;--railh:58px;--teambar:40px}
@@ -89,6 +107,15 @@ html.deck .teamsec{padding-left:calc(var(--rail) + 30px);padding-bottom:20px}
  .rail .tab .ic{width:32px;height:32px;border-radius:10px}.rail .tab .ic svg{width:19px;height:19px}
  main.view{padding:calc(var(--hdr) + var(--railh) + 22px + env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) calc(var(--teambar) + 20px + env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px))}
  html.deck .scene{padding-top:calc(var(--hdr) + var(--railh) + 22px + env(safe-area-inset-top,0px));padding-left:max(16px,env(safe-area-inset-left,0px))}
+ html.deck #s1 .demo-scope{order:0;margin-top:8px;margin-bottom:10px;font-size:15px;padding:12px 14px}
+ html.deck #s1 .demo-scope h3{font-size:17px}
+ html.deck #s1 .demo-scope ul{grid-template-columns:1fr;gap:5px}
+ html.deck #s1 .demo-scope-plan,html.deck #s1 .demo-scope-hack{margin-top:6px;font-size:14px}
+ html.deck #s1{overflow-y:auto;padding-bottom:calc(var(--teambar) + 16px)}
+ html.deck #s1 .s1hero{order:1}
+ html.deck #s1 #loop1{order:2;padding:12px 14px 16px}
+ html.deck #s1 .s1cta{order:3}
+ html.deck #s1 .hero1{max-width:220px;max-height:200px;margin:-8px auto -8px}
  html.deck .teamsec{padding-top:calc(var(--hdr) + var(--railh) + 22px);padding-left:16px}
  footer.site-foot{padding-left:16px;padding-right:16px}
  /* phones: one slim line, two equal name pills; each opens email, and the full emails are in Team Members */

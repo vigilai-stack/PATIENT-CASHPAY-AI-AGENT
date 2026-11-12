@@ -179,7 +179,8 @@ def test_grounded_price_and_dose_stays_on_the_parser(openai_env):
     script.responses.append(_completion())
     reply = chat(client, "What will a picture of my knee without dye cost?")
     assert reply["assistant"] == "openai"
-    assert NOTE in reply["text"] and "$450.00" in reply["text"]
+    # The model's explanation is never shown to the patient; the price comes from the server.
+    assert NOTE not in reply["text"] and "$450.00" in reply["text"]
     assert "$1.00" not in reply["text"]
     sent = _body(script.calls[0])
     assert sent["messages"][1]["content"].endswith("What will a picture of my knee without dye cost?")

@@ -177,11 +177,11 @@ def _service_named(text: str, service, blocked: list[tuple[int, int]]) -> bool:
     for key in service.keywords.split():
         if len(key) < 3 or key in _GENERIC_KEYS:
             continue
-        for match in re.finditer(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", text):
+        for match in re.finditer(rf"(?<![a-z0-9]){re.escape(key)}s?(?![a-z0-9])", text):
             if any(start <= match.start() < end for start, end in blocked):
                 continue
             positions.append(match.start())
-            if len(key) >= 4:
+            if len(match.group(0)) >= 4:  # "labs" (a plural of a short key) is as specific as a long key
                 distinctive += 1
     return len(positions) >= 2 or distinctive >= 1
 
