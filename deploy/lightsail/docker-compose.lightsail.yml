@@ -1,0 +1,22 @@
+# Overlay for a single Lightsail instance: adds Caddy (automatic HTTPS) in front of the API.
+# Usage: docker compose -f docker-compose.yml -f deploy/lightsail/docker-compose.lightsail.yml up -d --build
+services:
+  api:
+    ports: !reset []
+    restart: unless-stopped
+  db:
+    restart: unless-stopped
+  fhir:
+    restart: unless-stopped
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/lightsail/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [api]
+volumes:
+  caddy_data:

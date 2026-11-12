@@ -1,0 +1,39 @@
+# One-command local demo:  docker compose up --build   then open http://localhost:8000
+# Runs with no keys (local demo mode). Put PayPal sandbox keys in .env to switch to sandbox mode.
+name: cashpay-clinic-agent
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cashpay
+      POSTGRES_PASSWORD: cashpay-local-only
+      POSTGRES_DB: cashpay
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cashpay -d cashpay"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  fhir:
+    build: .
+    command: ["uvicorn", "fhir_stub.main:app", "--host", "0.0.0.0", "--port", "8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8090/fhir/metadata')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://cashpay:cashpay-local-only@db:5432/cashpay
+      AUTO_CREATE_SCHEMA: "0"
+      FHIR_BASE_URL: ${FHIR_BASE_URL:-http://fhir:8090/fhir}
+    ports: ["127.0.0.1:${APP_PORT:-8000}:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      fhir: {condition: service_healthy}
+volumes:
+  dbdata:

@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% set role_view = "patient" %}{% block title %}Secure checkout - Patient-cashpay_AI-agent{% endblock %}
+{% block nav %}<a href="/patient">Back to chat</a>{% endblock %}
+{% block body %}<div class="paybox card">
+<div class="muted">{{ service }}</div>
+<div class="amount" id="amount">{{ amount }}</div>
+<div class="muted" id="what">{% if pay.kind=='DEPOSIT' %}Deposit: authorized now, collected at check-in.{% elif pay.kind=='PLAN' %}Monthly plan over {{ pay.plan_months }} months.{% elif pay.kind=='INVOICE' %}Invoice sent by email.{% else %}Pay in full.{% endif %}</div>
+<div id="status" style="margin:14px 0"><span class="pill s-info" id="pill">{{ pay.status.replace('_',' ').title() }}</span></div>
+<div id="buttons">
+{% if pay.kind in ('FULL','DEPOSIT') %}
+  {% if mode=='sandbox' %}
+  <div id="paypal-button-container"></div><div id="venmo-button-container"></div>
+  <p class="muted" style="font-size:12px">PayPal sandbox: sign in with a sandbox personal (buyer) account.</p>
+  {% else %}
+  <p class="muted" style="font-size:13px">Local demo mode: these buttons stand in for the PayPal / Venmo popup and call the same server code.</p>
+  <button id="approve">Approve payment (test)</button> <button class="danger" id="decline">Decline (test)</button>
+  {% endif %}
+{% elif pay.kind=='PLAN' %}
+  {% if mode=='sandbox' and pay.approve_url %}<a class="btn" href="{{ pay.approve_url }}" target="_blank" rel="noopener">Approve plan on PayPal</a>
+  <button class="secondary" id="approve">I've approved it</button>
+  {% else %}<button id="approve">Approve plan (test)</button>{% endif %}
+{% else %}<p>Check your email for the invoice. Your visit is booked.</p>{% endif %}
+</div>
+<div class="err" id="msg" style="padding:0"></div>
+<p><a href="/patient">Back to chat</a></p></div>
+<script>
+const PAY_ID={{ pay.id }};const ORDER_ID={{ (pay.paypal_order_id or '')|tojson }};
+const tone={CAPTURED:'s-ok',AUTHORIZED:'s-ok',PLAN_ACTIVE:'s-ok',INVOICE_SENT:'s-ok',DECLINED:'s-bad',EXPIRED:'s-bad',UNKNOWN:'s-warn'};
+function show(j){const p=document.getElementById('pill');p.textContent=j.status.replace(/_/g,' ').toLowerCase().replace(/^./,c=>c.toUpperCase());p.className='pill '+(tone[j.status]||'s-info');
+ document.getElementById('msg').textContent=j.ok===false?j.message:(['CAPTURED','AUTHORIZED','PLAN_ACTIVE'].includes(j.status)?'Thank you! Your visit is confirmed.':'');
+ if(['CAPTURED','AUTHORIZED','PLAN_ACTIVE','EXPIRED'].includes(j.status))document.getElementById('buttons').style.display='none'}
+async function confirmPay(extra){const key=(crypto.randomUUID?crypto.randomUUID():String(Date.now()));
+ const r=await fetch(`/api/payments/${PAY_ID}/confirm`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(extra||{})});
+ const j=await r.json();show(j);return j}
+const a=document.getElementById('approve'),d=document.getElementById('decline');
+if(a)a.onclick=async()=>{a.disabled=true;await confirmPay({test_outcome:'approve'});a.disabled=false};
+if(d)d.onclick=async()=>{d.disabled=true;await confirmPay({test_outcome:'decline'});d.disabled=false};
+</script>
+{% if mode=='sandbox' and pay.kind in ('FULL','DEPOSIT') %}
+<script>
+// PayPal JS SDK v6. The order already exists on the server (amount from the clinic price list);
+// the browser never sends an amount.
+async function createOrder(){return {orderId: ORDER_ID}}
+async function onApprove(data){return confirmPay({order_id:data.orderId})}
+function onCancel(){document.getElementById('msg').textContent='Payment cancelled. You can try again.'}
+function onError(err){console.error(err);document.getElementById('msg').textContent='Your payment method was declined or something went wrong. Please try again or choose another method.'}
+async function onLoad(){
+  try{
+    const sdk=await window.paypal.createInstance({clientId:{{ client_id|tojson }},components:["paypal-payments","venmo-payments"],pageType:"checkout"});
+    const elig=await sdk.findEligibleMethods({currencyCode:"USD"});
+    if(elig.isEligible("paypal")){const b=document.createElement('paypal-button');b.setAttribute('type','pay');document.getElementById('paypal-button-container').append(b);
+      const sess=sdk.createPayPalOneTimePaymentSession({onApprove,onCancel,onError});
+      b.addEventListener('click',async()=>{try{await sess.start({presentationMode:"auto"},createOrder())}catch(e){onError(e)}})}
+    if(elig.isEligible("venmo")){const v=document.createElement('venmo-button');document.getElementById('venmo-button-container').append(v);
+      const vs=sdk.createVenmoOneTimePaymentSession({onApprove,onCancel,onError});
+      v.addEventListener('click',async()=>{try{await vs.start({presentationMode:"auto"},createOrder())}catch(e){onError(e)}})}
+    else{const n=document.createElement('p');n.className='muted';n.style.fontSize='12px';n.textContent='Venmo is not offered on this device or browser.';document.getElementById('venmo-button-container').append(n)}
+  }catch(e){onError(e)}
+}
+</script>
+<script async src="https://www.sandbox.paypal.com/web-sdk/v6/core" onload="onLoad()"></script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+# Spending firewall policy for the agent. Amounts are in cents (USD).
+# The agent can only call actions on this allowlist. Money moves only inside these caps,
+# and refunds / discounts always wait for a staff decision.
+clinic:
+  name: "Bayou City Family Clinic (synthetic)"
+  currency: USD
+allowlist:
+  - quote
+  - hold_slot
+  - create_checkout
+  - create_deposit_auth
+  - create_plan
+  - create_invoice
+  - request_refund
+  - request_discount
+  - get_status
+  # small agentic actions (auto-run, capped below)
+  - extend_hold
+  - resend_payment_link
+  - switch_payment_method
+caps:
+  hold_minutes: 15
+  order_expiry_minutes: 30
+  deposit_percent_min: 20
+  deposit_percent_max: 50
+  plan_months_min: 2
+  plan_months_max: 6
+  plan_min_total_cents: 15000
+  discount_max_percent: 15
+  billing_lead_refund_threshold_cents: 10000
+  small_actions:
+    extend_hold_max_per_appointment: 1
+    extend_hold_minutes: 15
+    resend_link_max_per_appointment: 3
+    switch_method_max_per_appointment: 2
+# These always need a human, whatever the model says.
+human_approval_required:
+  - refund
+  - discount

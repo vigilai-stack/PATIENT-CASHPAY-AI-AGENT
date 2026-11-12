@@ -1,0 +1,26 @@
+{%- set rv = role_view|default('') -%}
+<!doctype html><html lang="en"{% if rv=='landing' %} class="deck"{% endif %}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#1E1033">
+<title>{% block title %}Patient-cashpay_AI-agent{% endblock %}</title><meta name="application-name" content="Patient-cashpay_AI-agent"><link rel="icon" href="data:,">
+<script>document.documentElement.classList.add('js')</script>
+<link rel="preload" href="/static/mock/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/{{ 'mock.css' if rv=='landing' else 'app.css' }}"><link rel="stylesheet" href="/static/chrome.css">{% block head %}{% endblock %}</head>
+<body><div class="bg" aria-hidden="true"><i></i><i></i></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+{% include "_icons.html" %}</svg>
+<header class="hdr glass-b">
+ <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#F5F8FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 8.2a4.3 4.3 0 0 1 7.5 2.6C19.5 16.4 12 21 12 21z"/><path d="M12 11v6M10 12.5c0-.9.9-1.5 2-1.5s2 .5 2 1.3-1 1.1-2 1.2-2 .5-2 1.3.9 1.2 2 1.2 2-.6 2-1.5"/></svg></span><div class="logo"><span class="nw">Patient-cashpay</span><wbr><span class="nw">_AI-agent</span></div></div><span class="brk" aria-hidden="true"></span>
+ {% if rv=='landing' %}<nav class="prog" aria-label="Story progress"><div class="dotsrow" id="progdots"></div><span class="now" aria-live="polite"><b id="nowN">1</b> / 8</span></nav>
+ {% else %}<div class="hnav">{% block nav %}{% endblock %}</div>{% endif %}
+ <div class="hright"><span class="hk" id="hackathon-badge" title="Built for the PayPal Hackathon 2026"><img src="/static/mock/paypal-blue.svg" alt="PayPal" width="52" height="14"><span>Hackathon 2026</span></span>
+ <span class="sandbox" id="mode-badge" title="Payment mode"><svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-shield"/></svg>{{ 'PayPal sandbox' if mode=='sandbox' else 'Local demo' }} &middot; no real money</span></div>
+</header>
+<nav class="rail glass-b" id="role-rail" aria-label="Roles">
+<form method="post" action="/demo/login/patient"><button class="tab" id="rail-patient"{% if rv=='patient' %} aria-current="page"{% endif %}><span class="ic"><svg aria-hidden="true"><use href="#i-patient"/></svg></span>Patient</button></form>
+<form method="post" action="/demo/login/staff"><button class="tab" id="rail-staff"{% if rv=='staff' %} aria-current="page"{% endif %}><span class="ic"><svg aria-hidden="true"><use href="#i-staff"/></svg></span>Staff</button></form>
+<form method="post" action="/demo/login/billing_lead"><button class="tab" id="rail-lead"{% if rv=='billing_lead' %} aria-current="page"{% endif %}><span class="ic"><svg aria-hidden="true"><use href="#i-billing"/></svg></span>Billing lead</button></form>
+</nav>
+{% block main %}<main class="view" id="view"><div class="cam">{% block body %}{% endblock %}</div></main>{% endblock %}
+<footer class="site-foot"><span><strong>PayPal Hackathon 2026</strong> &middot; Patient-cashpay_AI-agent</span><span>Sandbox &middot; synthetic clinic data &middot; no real money</span>
+<span class="powered" id="powered-by"><b>Powered by</b> &middot; {% if llm_mode == "openai" %}OpenAI {{ openai_model }} (reads intent only; prices and payments come from the clinic system){% else %}Rule-based deterministic intent engine (LLM_MODE=mock); it does not call a hosted model{% endif %} &middot; PayPal {{ 'sandbox' if mode=='sandbox' else 'local demo adapter' }} &middot; <a href="https://www.ag-grid.com/" rel="noopener">AG Grid Community</a> {{ ag_grid_version }} and AG Charts Community {{ ag_charts_version }}, &copy; AG Grid Ltd., MIT License &middot; FastAPI</span></footer>
+<aside class="teambar glass-b" id="team-bar" aria-label="Team Members"><a class="m" href="mailto:sangeeta@vigilaisolutions.com"><img src="/static/mock/team-sangeeta.jpg" alt="" width="32" height="32"><span class="tx"><span class="nm">Sangeeta Sinha</span><span class="em">sangeeta@<wbr>vigilaisolutions.com</span></span></a><span class="tl">Team Members</span><a class="m" href="mailto:Chittranjan.garg@gmail.com"><img src="/static/mock/team-chittranjan.jpg" alt="" width="32" height="32"><span class="tx"><span class="nm">Chittranjan Garg</span><span class="em">Chittranjan.garg@<wbr>gmail.com</span></span></a></aside>
+{% block tail %}{% endblock %}</body></html>

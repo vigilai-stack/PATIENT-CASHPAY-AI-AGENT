@@ -1,0 +1,143 @@
+{% extends "base.html" %}{% set role_view = user.role %}{% block title %}Staff console - Patient-cashpay_AI-agent{% endblock %}
+{% block head %}<script src="/static/ag-grid-community.min.js"></script><script src="/static/ag-charts-community.min.js"></script>{% endblock %}
+{% block nav %}<span class="who"><span>{{ user.name }}</span> <span class="pill {{ 's-warn' if user.role=='billing_lead' else 's-info' }}" id="my-role" title="Signed-in role"><svg class="lock" aria-hidden="true"><use href="#i-lock"/></svg>{{ user.role.replace('_',' ') }}</span></span>
+<form method="post" action="/demo/login/{{ 'staff' if user.role=='billing_lead' else 'billing_lead' }}" style="display:inline"><button class="ghost">Switch to {{ 'front desk' if user.role=='billing_lead' else 'billing lead' }}</button></form> <a href="/">Home</a>{% endblock %}
+{% block body %}<style>main{max-width:1440px}</style>
+<div class="banner" id="role-banner" role="alert" aria-live="assertive"><span class="t"><svg class="lock" style="width:20px;height:20px" aria-hidden="true"><use href="#i-lock"/></svg>Needs billing lead approval.</span>
+<span class="d" id="role-banner-d"></span>
+<form method="post" action="/demo/login/billing_lead" style="display:inline"><button class="secondary" id="banner-switch">Switch to billing lead</button></form><button class="ghost x" id="banner-close" aria-label="Dismiss">Dismiss</button></div>
+<div class="kpis" id="kpis"></div>
+<div class="row" style="justify-content:space-between"><div class="tabs" id="tabs">
+<button data-t="approvals" class="on"><svg class="ic" aria-hidden="true"><use href="#i-human"/></svg>Approvals</button><button data-t="payments"><svg class="ic" aria-hidden="true"><use href="#i-card"/></svg>Payments</button><button data-t="recon"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Reconciliation</button><button data-t="audit"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg>Audit log</button></div>
+<div class="toolbar"><input id="decision-note" placeholder="Decision note" aria-label="Decision note" style="min-width:180px">
+<input id="qf" placeholder="Quick filter" aria-label="Quick filter">
+<button class="secondary" id="reconcile">Run reconcile</button><button class="secondary" id="verify">Verify audit chain</button></div></div>
+<div class="roles" aria-label="Who can approve"><span class="pill s-info"><svg class="lock" aria-hidden="true"><use href="#i-lock"/></svg>staff</span> refunds up to {{ refund_threshold }} <span class="pill s-warn"><svg class="lock" aria-hidden="true"><use href="#i-lock"/></svg>billing lead</span> refunds over {{ refund_threshold }}. Identical pending requests show once, with a count.</div>
+{% if demo_reset %}<section class="resetbox" id="reset-box" aria-label="Reset demo">
+<label class="switch"><input type="checkbox" id="reset-toggle" role="switch" aria-describedby="reset-note"><span class="track" aria-hidden="true"></span><span class="lbl">Allow reset <span id="reset-state">(off)</span></span></label>
+<button class="danger" id="reset-demo" disabled aria-disabled="true" title="Turn on Allow reset first"><svg class="lock" aria-hidden="true"><use href="#i-lock"/></svg>Reset demo</button>
+<p class="rnote" id="reset-note"><b>Note for judges:</b> Before you reset, make sure no other judge is in the middle of viewing the demo. Resetting clears the demo for everyone.</p>
+</section>{% endif %}
+<div class="err" id="note" style="padding:4px 0"></div>
+<div id="grid" class="gridbox card" style="padding:0"></div>
+{% if demo_reset %}<dialog id="reset-dialog" aria-labelledby="reset-title"><form method="dialog"><h3 id="reset-title">Reset the demo?</h3>
+<p>This deletes every synthetic booking, payment record, approval, chat and audit row in this demo, then loads the starting demo data again. {{ 'PayPal sandbox only' if mode=='sandbox' else 'Local demo data only' }}: no real money and no real patients. Anyone else using the demo right now starts over too.</p>
+<div class="row"><button class="ghost" value="cancel">Cancel</button><button class="danger" value="reset" id="reset-confirm">Reset demo</button></div></form></dialog>{% endif %}
+<section class="card" id="handoffs" style="margin-top:16px"><h3>Conversations waiting for a person</h3>
+<p class="muted" style="font-size:13px">These are chats a synthetic patient asked a person to review, or a clinical question this demo will not answer. Nothing here is emailed or sent to PayPal. Read the exact lines, then reply in this console.</p>
+<div id="handoff-list"></div>
+<div id="handoff-thread" style="margin-top:10px"></div>
+<form id="handoff-reply" class="row" style="margin-top:8px"><textarea id="handoff-text" rows="3" placeholder="Reply to the patient" aria-label="Staff reply" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--line)"></textarea><button type="submit">Send to this chat</button></form>
+</section>
+<section class="analyst"><div class="card"><h3>Billing analyst (read-only)</h3><p class="muted" style="font-size:13px">Ask in plain English. It reads data and builds a chart; it can't move money.</p>
+<form id="ask" class="row" style="margin-top:10px"><input id="q" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--line)" value="Collected by location this week"><button>Ask</button></form>
+<div class="chips"><button class="ghost" data-q="refunds by service">Refunds</button><button class="ghost" data-q="payments by method">PayPal vs Venmo</button><button class="ghost" data-q="payments by status">Status</button></div>
+<p id="answer" class="muted"></p></div><div class="card"><div id="chart"></div></div></section>
+<script>
+agGrid.ModuleRegistry&&agGrid.AllCommunityModule&&agGrid.ModuleRegistry.registerModules([agGrid.AllCommunityModule]);
+const ROLE={{ user.role|tojson }},ME={{ user.name|tojson }};
+const LOCK='<svg class="lock" aria-hidden="true"><use href="#i-lock"/></svg>';
+const RANK={staff:1,billing_lead:2};
+const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* grid colors follow the page background (--bg in app.css), so a palette swap is one line there */
+const BG=(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()||'#1E1033');
+const tint=(k)=>{const p=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));const a=p(BG);return '#'+a.map(v=>Math.round(v+(255-v)*k).toString(16).padStart(2,'0')).join('')};
+const theme=(agGrid.colorSchemeDark?agGrid.themeQuartz.withPart(agGrid.colorSchemeDark):agGrid.themeQuartz).withParams({accentColor:'#22D3EE',backgroundColor:tint(.025),foregroundColor:'#F5F8FF',
+ chromeBackgroundColor:tint(.04),headerBackgroundColor:tint(.06),headerTextColor:'#F5F8FF',borderColor:'rgba(255,255,255,0.14)',browserColorScheme:'dark',
+ fontFamily:'Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif',rowHoverColor:'rgba(34,211,238,0.07)',borderRadius:10,wrapperBorderRadius:18,spacing:7,
+ selectedRowBackgroundColor:'rgba(34,211,238,0.14)',oddRowBackgroundColor:tint(.035)});
+const banner=document.getElementById('role-banner');
+function showBanner(d,serverMsg){document.getElementById('role-banner-d').textContent=`${ME} (${ROLE.replace('_',' ')}) can't approve request ${d.id}: a ${d.amount} ${d.kind.toLowerCase()} needs a billing lead. The server refused it (403: "${serverMsg}"). No money moved.`;
+ banner.classList.add('on');banner.scrollIntoView({block:'nearest'});document.getElementById('banner-switch').focus()}
+document.getElementById('banner-close').onclick=()=>banner.classList.remove('on');
+const note=document.getElementById('note');
+const tone=s=>({CAPTURED:'s-ok',MATCHED:'s-ok',EXECUTED:'s-ok',APPROVED:'s-ok',AUTHORIZED:'s-info',PLAN_ACTIVE:'s-ok',INVOICE_SENT:'s-info',PENDING:'s-warn',PLAN_PENDING:'s-warn',
+ CREATED:'s-mute',UNKNOWN:'s-warn',UNDERPAID:'s-warn',BALANCE_DUE:'s-info',OVERPAID:'s-bad',NO_PAYMENT:'s-bad',DECLINED:'s-bad',DENIED:'s-bad',FAILED:'s-bad',EXPIRED:'s-mute',VOIDED:'s-mute',
+ PARTIALLY_REFUNDED:'s-info',REFUNDED:'s-info',OK:'s-ok',ALLOWED:'s-ok',FLAGGED:'s-warn',PARKED:'s-warn',PROCESSED:'s-ok'}[s]||'s-mute');
+const pill=p=>{const s=p.value||'';return `<span class="pill ${tone(s)}">${s.replace(/_/g,' ').toLowerCase()}</span>`};
+async function api(u,o){const r=await fetch(u,o);if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail||m}catch(e){}throw new Error(m)}return r.json()}
+function actions(p){const d=p.data;if(d.status!=='PENDING')return `<span class="pill ${tone(d.status)}">${esc(d.status.toLowerCase())}</span>`+(d.decided_by?` <span class="muted" style="font-size:12px">by ${esc(d.decided_by)}</span>`:'');
+ const locked=(RANK[ROLE]||0)<(RANK[d.required_role]||1);
+ const w=document.createElement('span');w.className='act';const a=document.createElement('button');a.innerHTML=(locked?LOCK+' ':'')+'Approve';a.style.padding='4px 9px';a.style.minHeight='34px';a.setAttribute('aria-label','Approve request '+d.id+(locked?' (needs billing lead)':''));
+ if(locked){a.className='secondary';a.title='Needs billing lead approval'}
+ const n=document.createElement('button');n.textContent='Deny';n.className='ghost';n.style.padding='4px 9px';n.style.minHeight='34px';
+ a.onclick=()=>decide(d,true);n.onclick=()=>decide(d,false);w.append(a,n);return w}
+async function decide(d,ok){const id=d.id;note.textContent='';banner.classList.remove('on');const typed=document.getElementById('decision-note').value||'';const decisionNote=typed.trim()?typed:(ok?'Approved in console':'Denied in console');
+ const r=await fetch(`/api/staff/approvals/${id}/decide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve:ok,note:decisionNote})});
+ let j={};try{j=await r.json()}catch(e){}
+ if(r.status===403&&d.required_role==='billing_lead'){showBanner(d,j.detail||'This needs a billing lead.')}
+ else if(!r.ok){note.style.color='var(--bad)';note.textContent=j.detail||r.statusText}
+ else{note.style.color='var(--ok)';note.textContent=`Request ${id}: ${j.status.toLowerCase()}${j.note&&j.status==='FAILED'?' - '+j.note:''}`+(d.count>1?` ${d.count-1} identical request(s) still pending.`:'')}
+ load()}
+function approvalCols(){const w=innerWidth,narrow=w<700,mid=w<1280,wide=w>=1600;
+ const needs={field:'required_role',headerName:'Needs',width:narrow?118:136,flex:0,cellRenderer:p=>`<span class="pill ${p.value==='billing_lead'?'s-warn':'s-info'}">${LOCK}${esc(p.value.replace('_',' '))}</span>`};
+ const reason={field:'reason',headerName:"Reason (patient's words)",flex:3,minWidth:narrow?230:280,wrapText:true,autoHeight:true,cellRenderer:reasonCell,getQuickFilterText:p=>(p.data.summary||'')+' '+(p.data.quote||p.data.reason||'')};
+ const action={headerName:'Action',colId:'action',minWidth:narrow?156:214,width:narrow?156:214,flex:0,cellRenderer:actions,sortable:false,filter:false,pinned:narrow?null:'right'};
+ const patient={field:'patient',minWidth:narrow?100:120,flex:1},amount={field:'amount',width:narrow?92:108,flex:0};
+ if(narrow){reason.minWidth=200;reason.headerName='Request';action.width=action.minWidth=132;action.autoHeight=true;return [reason,action,needs,patient,amount]}
+ return [{field:'id',width:64,flex:0,hide:!wide},{field:'kind',width:96,flex:0,hide:mid},patient,{field:'service',flex:1,minWidth:130,hide:mid},amount,
+  {field:'injection_flag',headerName:'Flag',width:100,flex:0,cellRenderer:p=>p.value?'<span class="pill s-bad">injection</span>':''},needs,reason,
+  {field:'status',width:110,flex:0,cellRenderer:pill,hide:mid},action]}
+function reasonCell(p){const d=p.data||{};const w=document.createElement('div');w.className='reason';
+ if(innerWidth<700){const m=document.createElement('span');m.className='meta';m.innerHTML=`${esc(d.patient)} · ${esc(d.amount)} · <span class="pill ${d.required_role==='billing_lead'?'s-warn':'s-info'}">${LOCK}${esc((d.required_role||'').replace('_',' '))}</span>`;w.appendChild(m)}
+ const s=document.createElement('span');s.className='sum';s.textContent=d.summary||'';w.appendChild(s);
+ if(d.count>1){const c=document.createElement('span');c.className='dup';c.textContent='\u00d7'+d.count+' identical';c.title='Also request '+d.duplicate_ids.join(', ');w.appendChild(c)}
+ if(d.quote){const q=document.createElement('q');q.textContent=d.quote;q.title='Patient\'s exact chat message';w.appendChild(q)}
+ else if(d.reason){const r=document.createElement('span');r.className='src';r.textContent='Note: '+d.reason;w.appendChild(r)}
+ return w}
+function depositBtn(p){if(p.data.kind!=='DEPOSIT'||p.data.status!=='AUTHORIZED')return '';const b=document.createElement('button');b.textContent='Capture at check-in';b.style.padding='4px 10px';
+ b.onclick=async()=>{try{await api(`/api/staff/payments/${p.data.id}/capture-deposit`,{method:'POST'});note.style.color='var(--ok)';note.textContent='Deposit captured.'}catch(e){note.style.color='var(--bad)';note.textContent=e.message}load()};return b}
+const views={
+ approvals:{url:'/api/staff/approvals?collapse=1',cols:approvalCols()},
+ payments:{url:'/api/staff/payments',cols:[{field:'id',width:70},{field:'patient'},{field:'service',flex:1.2},{field:'location'},{field:'kind',width:100},{field:'funding',width:95},{field:'amount',width:100},
+  {field:'refunded',width:100},{field:'status',width:150,cellRenderer:pill},{field:'paypal_order_id',headerName:'PayPal order / sub',flex:1},{field:'paypal_capture_id',headerName:'Capture',flex:1},{headerName:'Check-in',width:180,cellRenderer:depositBtn}]},
+ recon:{url:'/api/staff/recon',cols:[{field:'appointment_id',headerName:'Visit',width:90},{field:'patient'},{field:'service',flex:1.3},{field:'expected'},{field:'collected'},{field:'pending'},{field:'status',cellRenderer:pill}]},
+ audit:{url:'/api/staff/audit',cols:[{field:'id',width:70},{field:'ts',headerName:'Time (UTC)',width:190},{field:'actor',width:120},{field:'action',flex:1},{field:'decision',width:120,cellRenderer:pill},{field:'rule',flex:1},
+  {field:'details',flex:1.6},{field:'hash',width:120},{field:'chain_ok',headerName:'Chain',width:90,cellRenderer:p=>p.value?'<span class="pill s-ok">&#10003;</span>':'<span class="pill s-bad">&#10007;</span>'}]}};
+let current='approvals',api_=null;
+const NO_ROWS='<span class="muted">Nothing here yet.</span>';
+function mount(){const el=document.getElementById('grid');if(api_){api_.destroy();api_=null}el.innerHTML='';el.classList.remove('zoom');void el.offsetWidth;el.classList.add('zoom');api_=agGrid.createGrid(el,{theme,columnDefs:views[current].cols,rowData:[],
+ defaultColDef:{flex:1,minWidth:90,sortable:true,filter:true,resizable:true},animateRows:true,rowHeight:46,pagination:true,paginationPageSize:20,paginationPageSizeSelector:[10,20,50],
+ loading:true,overlayLoadingTemplate:'<span class="muted">Loading&hellip;</span>',overlayNoRowsTemplate:NO_ROWS,tooltipShowDelay:300});load()}
+// Show "Loading" until this grid's own list arrives; never "Nothing here yet" for a list that is still loading or failed.
+// A late reply for a grid that was replaced (tab click) is dropped instead of filling the old grid.
+async function load(){const g=api_,view=current;kpis();
+ try{const rows=await api(views[view].url);if(g!==api_)return;g.setGridOption('overlayNoRowsTemplate',NO_ROWS);g.setGridOption('rowData',rows)}
+ catch(e){if(g!==api_)return;g.setGridOption('overlayNoRowsTemplate',`<span style="color:var(--bad)">Could not load this list: ${esc(e.message)}. Click the tab again to retry.</span>`);g.setGridOption('rowData',[]);note.style.color='var(--bad)';note.textContent=e.message}
+ finally{if(g===api_)g.setGridOption('loading',false)}}
+async function kpis(){const k=await api('/api/staff/kpis');document.getElementById('kpis').innerHTML=[['Collected (net)',k.collected],['Deposits authorized',k.authorized_deposits],
+ ['Pending approvals',k.pending_approvals],['Guard blocks + flags',k.guard_blocks],['Payments',k.payments]].map(([l,v])=>`<div class="card kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('on'));b.classList.add('on');current=b.dataset.t;mount()});
+document.getElementById('qf').oninput=e=>api_.setGridOption('quickFilterText',e.target.value);
+document.getElementById('verify').onclick=async()=>{const v=await api('/api/staff/audit/verify');note.style.color=v.ok?'var(--ok)':'var(--bad)';note.textContent=v.ok?`Audit chain verified: ${v.rows} rows, no tampering.`:`Tampering detected in rows ${v.broken_ids.join(', ')}`};
+document.getElementById('reconcile').onclick=async()=>{const r=await api('/api/staff/reconcile',{method:'POST'});note.style.color='var(--ok)';note.textContent=`Reconcile done: ${r.healed} payment(s) healed, ${r.parked_processed} parked webhook(s) processed.`;load()};
+let chart=null;
+async function ask(q){const r=await api('/api/staff/analyst',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});document.getElementById('answer').textContent=r.answer;
+ const opts={container:document.getElementById('chart'),title:{text:r.title},data:r.chart?r.chart.data:[],background:{fill:'transparent'},theme:{baseTheme:'ag-default-dark',palette:{fills:['#22D3EE','#A78BFA','#38BDF8','#34D399','#FBBF24','#C4B5FD'],strokes:[BG]}},
+  series:r.chart&&r.chart.type==='pie'?[{type:'pie',angleKey:'value',legendItemKey:'label'}]:[{type:'bar',xKey:'label',yKey:'value',cornerRadius:6}]};
+ if(chart)chart.update(opts);else chart=agCharts.AgCharts.create(opts)}
+document.getElementById('ask').onsubmit=e=>{e.preventDefault();const q=document.getElementById('q').value.trim();if(q.length<2){note.textContent='Type a question.';return}ask(q)};
+document.querySelectorAll('.analyst .chips button').forEach(b=>b.onclick=()=>{document.getElementById('q').value=b.dataset.q;ask(b.dataset.q)});
+let handoffId=null;
+async function loadHandoffs(){const rows=await api('/api/staff/conversations');const box=document.getElementById('handoff-list');box.innerHTML='';
+ if(!rows.length){box.innerHTML='<p class="muted">No chats are waiting.</p>';return}
+ for(const row of rows){const b=document.createElement('button');b.className='ghost';b.textContent=row.patient+' · '+row.reason+' · '+row.status;b.onclick=()=>openHandoff(row.conversation_id);box.appendChild(b)}}
+async function openHandoff(id){handoffId=id;const data=await api('/api/staff/conversations/'+id);const box=document.getElementById('handoff-thread');box.innerHTML='';
+ for(const m of data.messages){const d=document.createElement('div');d.className='msg '+(m.speaker==='patient'?'me':(m.speaker==='staff'?'staff':'bot'));d.textContent=(m.staff_name?m.staff_name+': ':'')+m.body;box.appendChild(d)}}
+document.getElementById('handoff-reply').onsubmit=async e=>{e.preventDefault();if(!handoffId){note.textContent='Open a conversation first.';return}
+ const box=document.getElementById('handoff-text');const text=box.value;
+ if(!text.trim()){note.style.color='var(--bad)';note.textContent='Please type a message. The box was not cleared.';return}
+ if(Array.from(text).length>{{ max_accepted_chars }}){note.style.color='var(--bad)';note.textContent='That reply is over {{ max_accepted_chars }} characters, so it was not sent. It is still in the box.';return}
+ try{await api('/api/staff/conversations/'+handoffId+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});box.value='';await openHandoff(handoffId);await loadHandoffs()}catch(err){note.style.color='var(--bad)';note.textContent=err.message+' The reply is still in the box.'}};
+const rb=document.getElementById('reset-demo'),rt=document.getElementById('reset-toggle');
+function setResetLock(on){rt.checked=on;rb.disabled=!on;rb.setAttribute('aria-disabled',String(!on));rb.title=on?'Reset the synthetic demo data':'Turn on Allow reset first';
+ rb.querySelector('.lock').style.display=on?'none':'';document.getElementById('reset-state').textContent=on?'(on)':'(off)';document.getElementById('reset-box').classList.toggle('on',on)}
+// Off on every page load. The switch lives only in this browser tab; it never unlocks reset for anyone else.
+if(rb&&rt){setResetLock(false);rt.onchange=()=>setResetLock(rt.checked)}
+if(rb){const dlg=document.getElementById('reset-dialog');rb.onclick=()=>{if(!rt.checked||rb.disabled)return;dlg.showModal()};
+ dlg.addEventListener('close',async()=>{if(dlg.returnValue!=='reset')return;rb.disabled=true;
+  try{await api('/api/staff/demo/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:'RESET'})});
+   note.style.color='var(--ok)';note.textContent='Demo reset: starting synthetic data loaded again.';handoffId=null;document.getElementById('handoff-thread').innerHTML='';load();loadHandoffs();ask(document.getElementById('q').value)}
+  catch(e){note.style.color='var(--bad)';note.textContent=e.message}finally{setResetLock(false)}})}
+mount();ask(document.getElementById('q').value);loadHandoffs();
+</script>{% endblock %}
