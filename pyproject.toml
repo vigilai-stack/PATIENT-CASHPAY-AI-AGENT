@@ -1,0 +1,23 @@
+[project]
+name = "patient-cashpay-ai-agent"
+version = "0.1.0"
+description = "Patient payment assistant for cash-pay clinics (PayPal + Venmo, staff-approved refunds, spending firewall)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+# Heavy upstream pins (openai-agents, langchain, crewai-tools). Kept optional on purpose.
+toolkit = ["paypal-agent-toolkit==1.11.0"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["notebooks", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["sandbox: needs PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET (skipped otherwise)"]
